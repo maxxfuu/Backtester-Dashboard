@@ -58,17 +58,67 @@ st.markdown("""
         font-size: 0.85rem; color: #556677; letter-spacing: 0.25em;
         margin-top: -4px; margin-bottom: 24px; }
     .metric-card { background: #0f1520; border: 1px solid #1a2235; border-radius: 8px;
-        padding: 14px 18px; text-align: center; }
+        padding: 14px 18px; text-align: center; position: relative; cursor: default; }
     .metric-card .label { font-size: 0.7rem; color: #556677; letter-spacing: 0.15em;
         text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
     .metric-card .value { font-size: 1.5rem; font-weight: 700;
         font-family: 'JetBrains Mono', monospace; color: #e8c547; margin-top: 4px; }
     .metric-card .value.green { color: #00e5a0; }
     .metric-card .value.red { color: #ff4d6a; }
+    .metric-card .tooltip-text { visibility: hidden; opacity: 0; position: absolute;
+        bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+        background: #1a2235; color: #c0ccd8; font-family: 'JetBrains Mono', monospace;
+        font-size: 0.65rem; letter-spacing: 0.03em; line-height: 1.5;
+        padding: 10px 14px; border-radius: 6px; border: 1px solid #2a3a55;
+        white-space: normal; width: 220px; z-index: 1000;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        transition: opacity 0.2s ease, visibility 0.2s ease; text-align: left; }
+    .metric-card .tooltip-text::after { content: ''; position: absolute;
+        top: 100%; left: 50%; transform: translateX(-50%);
+        border: 6px solid transparent; border-top-color: #1a2235; }
+    .metric-card:hover .tooltip-text { visibility: visible; opacity: 1; }
     div[data-testid="stFileUploader"] label { color: #c0ccd8 !important;
         font-family: 'JetBrains Mono', monospace !important; }
     .stSelectbox label, .stMultiSelect label { color: #c0ccd8 !important;
         font-family: 'JetBrains Mono', monospace !important; }
+
+    /* ── Sidebar widget overrides ── */
+    [data-testid="stSidebar"] [data-baseweb="tag"] {
+        background-color: #1a2235 !important; border: 1px solid #2a3a55 !important;
+        color: #c0ccd8 !important; }
+    [data-testid="stSidebar"] [data-baseweb="tag"] span { color: #c0ccd8 !important; }
+    [data-testid="stSidebar"] [data-baseweb="tag"] svg { fill: #556677 !important; }
+    [data-testid="stSidebar"] [data-baseweb="tag"]:hover svg { fill: #ff4d6a !important; }
+    [data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background-color: #0f1520 !important; border-color: #1a2235 !important; }
+    [data-testid="stSidebar"] [data-baseweb="select"] > div:focus-within {
+        border-color: #2a3a55 !important; box-shadow: 0 0 0 1px #2a3a55 !important; }
+    [data-testid="stSidebar"] [data-baseweb="popover"] > div { background-color: #0f1520 !important; }
+    [data-testid="stSidebar"] [role="listbox"] { background-color: #0f1520 !important; }
+    [data-testid="stSidebar"] [role="option"] { background-color: #0f1520 !important; color: #c0ccd8 !important; }
+    [data-testid="stSidebar"] [role="option"]:hover { background-color: #1a2235 !important; }
+    [data-testid="stSidebar"] [data-baseweb="icon"] svg { fill: #556677 !important; }
+
+    /* ── Slider ── */
+    [data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"] {
+        background-color: #1a2235 !important; border-color: #2a3a55 !important;
+        box-shadow: none !important; width: 12px !important; height: 12px !important; }
+    [data-testid="stSidebar"] [data-baseweb="slider"] div[data-testid="stThumbValue"] {
+        color: #556677 !important; }
+    [data-testid="stSidebar"] [data-baseweb="slider"] div > div > div {
+        background: #1a2235 !important; }
+    [data-testid="stSidebar"] [data-baseweb="slider"] div > div > div > div {
+        background: #2a3a55 !important; }
+
+    /* ── File uploader ── */
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] section {
+        background-color: #0f1520 !important; border-color: #1a2235 !important; }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
+        background-color: #1a2235 !important; color: #c0ccd8 !important;
+        border-color: #2a3a55 !important; }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] button:hover {
+        background-color: #2a3a55 !important; border-color: #3a4a65 !important; }
+    [data-testid="stSidebar"] small { color: #556677 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,6 +129,10 @@ st.markdown("""
 def parse_prices_csv(file_bytes: bytes) -> pd.DataFrame:
     text = file_bytes.decode("utf-8")
     df = pd.read_csv(io.StringIO(text), sep=";")
+    return _coerce_numeric_columns(df)
+
+
+def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         if "price" in col or "volume" in col or col in ("mid_price", "profit_and_loss"):
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -91,58 +145,77 @@ def parse_log_file(file_bytes: bytes):
 
     activities_df = None
     trades_list = []
-
-    act_match = text.find("Activities log:\n")
-    trade_match = text.find("Trade History:\n")
-
-    if act_match != -1:
-        act_start = act_match + len("Activities log:\n")
-        act_end = trade_match if trade_match != -1 else len(text)
-        act_text = text[act_start:act_end].strip()
-        if act_text:
-            activities_df = pd.read_csv(io.StringIO(act_text), sep=";")
-            for col in activities_df.columns:
-                if "price" in col or "volume" in col or col in ("mid_price", "profit_and_loss"):
-                    activities_df[col] = pd.to_numeric(activities_df[col], errors="coerce")
-
-    if trade_match != -1:
-        trade_start = trade_match + len("Trade History:\n")
-        trade_text = text[trade_start:].strip()
-        trade_text = re.sub(r",(\s*[}\]])", r"\1", trade_text)
-        try:
-            trades_list = json.loads(trade_text)
-        except json.JSONDecodeError:
-            trades_list = []
-
     sandbox_entries = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if line.startswith("{") and '"lambdaLog"' in line:
-            try:
-                entry = json.loads(line)
-                sandbox_entries.append(entry)
-            except json.JSONDecodeError:
-                pass
 
-    if not sandbox_entries:
-        block = ""
-        in_block = False
+    # ── Try JSON envelope format (performance tester / submission result) ──
+    json_parsed = False
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        try:
+            envelope = json.loads(stripped)
+            if "activitiesLog" in envelope or "tradeHistory" in envelope:
+                json_parsed = True
+                act_csv = envelope.get("activitiesLog", "")
+                if act_csv:
+                    activities_df = _coerce_numeric_columns(
+                        pd.read_csv(io.StringIO(act_csv), sep=";")
+                    )
+                trades_list = envelope.get("tradeHistory", [])
+                sandbox_entries = envelope.get("logs", [])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # ── Fallback: plain-text backtester log format ──
+    if not json_parsed:
+        act_match = text.find("Activities log:\n")
+        trade_match = text.find("Trade History:\n")
+
+        if act_match != -1:
+            act_start = act_match + len("Activities log:\n")
+            act_end = trade_match if trade_match != -1 else len(text)
+            act_text = text[act_start:act_end].strip()
+            if act_text:
+                activities_df = _coerce_numeric_columns(
+                    pd.read_csv(io.StringIO(act_text), sep=";")
+                )
+
+        if trade_match != -1:
+            trade_start = trade_match + len("Trade History:\n")
+            trade_text = text[trade_start:].strip()
+            trade_text = re.sub(r",(\s*[}\]])", r"\1", trade_text)
+            try:
+                trades_list = json.loads(trade_text)
+            except json.JSONDecodeError:
+                trades_list = []
+
         for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped == "{" or (stripped.startswith("{") and '"sandboxLog"' in stripped):
-                in_block = True
-                block = stripped
-            elif in_block:
-                block += stripped
-                if stripped == "}":
-                    in_block = False
-                    try:
-                        entry = json.loads(block)
-                        if "lambdaLog" in entry:
-                            sandbox_entries.append(entry)
-                    except json.JSONDecodeError:
-                        pass
-                    block = ""
+            line = line.strip()
+            if line.startswith("{") and '"lambdaLog"' in line:
+                try:
+                    entry = json.loads(line)
+                    sandbox_entries.append(entry)
+                except json.JSONDecodeError:
+                    pass
+
+        if not sandbox_entries:
+            block = ""
+            in_block = False
+            for line in text.split("\n"):
+                s = line.strip()
+                if s == "{" or (s.startswith("{") and '"sandboxLog"' in s):
+                    in_block = True
+                    block = s
+                elif in_block:
+                    block += s
+                    if s == "}":
+                        in_block = False
+                        try:
+                            entry = json.loads(block)
+                            if "lambdaLog" in entry:
+                                sandbox_entries.append(entry)
+                        except json.JSONDecodeError:
+                            pass
+                        block = ""
 
     orders_by_ts = {}
     positions_by_ts = {}
@@ -368,6 +441,119 @@ def build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
 
 
+# ─── Portfolio overview ─────────────────────────────────────────────────────────
+
+PRODUCT_COLORS = [
+    "#00bfff", "#e8c547", "#00e5a0", "#ff4d6a",
+    "#7c5cfc", "#ff9f43", "#54a0ff", "#ee5a24",
+]
+
+
+def build_portfolio_overview(prices_df, selected_products, sharpe_window):
+    product_pnls = {}
+    for product in selected_products:
+        pdf = prices_df[prices_df["product"] == product].copy().sort_values("timestamp")
+        if pdf.empty or "profit_and_loss" not in pdf.columns:
+            continue
+        pnl_series = pdf.set_index("timestamp")["profit_and_loss"].fillna(0)
+        pnl_series = pnl_series.groupby(level=0).last()
+        product_pnls[product] = pnl_series
+
+    if not product_pnls:
+        return
+
+    all_ts = sorted(set().union(*(s.index for s in product_pnls.values())))
+    combined = pd.DataFrame(index=all_ts)
+    for product, series in product_pnls.items():
+        combined[product] = series.reindex(combined.index).ffill().fillna(0)
+    combined["Total"] = combined.sum(axis=1)
+
+    # ─── PnL Over Time ─────────────────────────────────────────────────────────
+    fig_pnl = go.Figure()
+    for i, product in enumerate(selected_products):
+        if product in combined.columns:
+            fig_pnl.add_trace(go.Scatter(
+                x=combined.index, y=combined[product],
+                mode="lines", name=product,
+                line=dict(color=PRODUCT_COLORS[i % len(PRODUCT_COLORS)], width=1.5),
+            ))
+
+    if len(product_pnls) > 1:
+        fig_pnl.add_trace(go.Scatter(
+            x=combined.index, y=combined["Total"],
+            mode="lines", name="Total",
+            line=dict(color="#ffffff", width=2.5),
+        ))
+
+    fig_pnl.add_hline(y=0, line=dict(color=ZERO_LINE, width=1, dash="dash"))
+    fig_pnl.update_layout(
+        title="PnL Over Time",
+        height=370,
+        **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")},
+    )
+    fig_pnl.update_xaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, title_text="Timestamp")
+    fig_pnl.update_yaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, title_text="PnL")
+    st.plotly_chart(fig_pnl, use_container_width=True, config={"displayModeBar": True})
+
+    # ─── Rolling Sharpe & PnL Breakdown side-by-side ───────────────────────────
+    col_sharpe, col_breakdown = st.columns([3, 2])
+
+    with col_sharpe:
+        total_pnl = combined["Total"]
+        returns = total_pnl.diff().fillna(0)
+        window = min(sharpe_window, len(returns) - 1) if len(returns) > 1 else 1
+
+        rolling_mean = returns.rolling(window=window, min_periods=window).mean()
+        rolling_std = returns.rolling(window=window, min_periods=window).std()
+        rolling_sharpe = rolling_mean / rolling_std.replace(0, np.nan)
+
+        fig_sharpe = go.Figure()
+        fig_sharpe.add_trace(go.Scatter(
+            x=combined.index, y=rolling_sharpe,
+            mode="lines", name=f"Rolling Sharpe ({window})",
+            line=dict(color="#7c5cfc", width=2),
+            fill="tozeroy", fillcolor="rgba(124,92,252,0.08)",
+        ))
+        fig_sharpe.add_hline(y=0, line=dict(color=ZERO_LINE, width=1, dash="dash"))
+        fig_sharpe.update_layout(
+            title=f"Rolling Sharpe Ratio (window={window})",
+            height=340,
+            **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")},
+        )
+        fig_sharpe.update_xaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, title_text="Timestamp")
+        fig_sharpe.update_yaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, title_text="Sharpe")
+        st.plotly_chart(fig_sharpe, use_container_width=True, config={"displayModeBar": True})
+
+    with col_breakdown:
+        final_pnls = {}
+        for product in selected_products:
+            if product in combined.columns:
+                final_pnls[product] = combined[product].iloc[-1]
+
+        products_sorted = sorted(final_pnls.keys(), key=lambda p: final_pnls[p])
+        values = [final_pnls[p] for p in products_sorted]
+        colors = [BID_COLOR if v >= 0 else ASK_COLOR for v in values]
+
+        fig_breakdown = go.Figure()
+        fig_breakdown.add_trace(go.Bar(
+            y=products_sorted, x=values,
+            orientation="h",
+            marker=dict(color=colors),
+            text=[f"{v:+,.1f}" for v in values],
+            textposition="auto",
+            textfont=dict(family=FONT, size=11),
+        ))
+        fig_breakdown.add_vline(x=0, line=dict(color=ZERO_LINE, width=1, dash="dash"))
+        fig_breakdown.update_layout(
+            title="PnL Per Product",
+            height=340,
+            **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")},
+        )
+        fig_breakdown.update_xaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, title_text="PnL")
+        fig_breakdown.update_yaxes(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR)
+        st.plotly_chart(fig_breakdown, use_container_width=True, config={"displayModeBar": True})
+
+
 # ─── Metric cards ──────────────────────────────────────────────────────────────
 
 def render_metrics(prices_df, trades_df, product):
@@ -394,17 +580,24 @@ def render_metrics(prices_df, trades_df, product):
 
     cols = st.columns(6)
     cards = [
-        ("FINAL PNL", f"{final_pnl:+,.1f}", pnl_class),
-        ("MAX DRAWDOWN", f"{max_dd:+,.1f}", dd_class),
-        ("PRICE RANGE", price_range, ""),
-        ("TIMESTAMPS", f"{n_timestamps:,}", ""),
-        ("BUYS", str(n_buys), "green"),
-        ("SELLS", str(n_sells), "red"),
+        ("FINAL PNL", f"{final_pnl:+,.1f}", pnl_class,
+         "Cumulative profit &amp; loss at the last timestamp. Positive means net profit, negative means net loss."),
+        ("MAX DRAWDOWN", f"{max_dd:+,.1f}", dd_class,
+         "Largest peak-to-trough decline in PnL. Measures the worst losing streak from any high-water mark."),
+        ("PRICE RANGE", price_range, "",
+         "The lowest and highest mid-price observed for this product across all timestamps."),
+        ("TIMESTAMPS", f"{n_timestamps:,}", "",
+         "Total number of unique time steps in the simulation data for this product."),
+        ("BUYS", str(n_buys), "green",
+         "Number of trades where your algorithm was the buyer (SUBMISSION appears as buyer)."),
+        ("SELLS", str(n_sells), "red",
+         "Number of trades where your algorithm was the seller (SUBMISSION appears as seller)."),
     ]
-    for col, (label, value, cls) in zip(cols, cards):
+    for col, (label, value, cls, tip) in zip(cols, cards):
         cls_str = f" {cls}" if cls else ""
         col.markdown(f"""
         <div class="metric-card">
+            <span class="tooltip-text">{tip}</span>
             <div class="label">{label}</div>
             <div class="value{cls_str}">{value}</div>
         </div>
@@ -489,9 +682,17 @@ if prices_df is not None and not prices_df.empty:
         else:
             selected_days = None
 
+        st.markdown("### Analytics")
+        sharpe_window = st.slider(
+            "Rolling Sharpe window",
+            min_value=10, max_value=500, value=100, step=10,
+        )
+
     if not selected_products:
         st.info("Select at least one product from the sidebar.")
     else:
+        build_portfolio_overview(prices_df, selected_products, sharpe_window)
+
         for product in selected_products:
             st.markdown(f"---")
             render_metrics(prices_df, trades_df, product)
