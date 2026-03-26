@@ -77,6 +77,8 @@ st.markdown("""
         top: 100%; left: 50%; transform: translateX(-50%);
         border: 6px solid transparent; border-top-color: #1a2235; }
     .metric-card:hover .tooltip-text { visibility: visible; opacity: 1; }
+    .metric-card.dd-clickable { cursor: pointer; transition: border-color 0.2s ease; }
+    .metric-card.dd-clickable:hover { border-color: #ff4d6a; }
     div[data-testid="stFileUploader"] label { color: #c0ccd8 !important;
         font-family: 'JetBrains Mono', monospace !important; }
     .stSelectbox label, .stMultiSelect label { color: #c0ccd8 !important;
@@ -229,6 +231,9 @@ def parse_log_file(file_bytes: bytes):
         except (json.JSONDecodeError, TypeError):
             continue
 
+        if not isinstance(parsed, list):
+            continue
+
         state_arr = parsed[0] if len(parsed) > 0 else []
         orders_arr = parsed[1] if len(parsed) > 1 else []
 
@@ -251,7 +256,7 @@ def parse_log_file(file_bytes: bytes):
 
 # ─── Chart builders ────────────────────────────────────────────────────────────
 
-def build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts):
+def build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts, dd_highlight=None):
     pdf = prices_df[prices_df["product"] == product].copy().sort_values("timestamp")
     pdf = pdf.reset_index(drop=True)
 
@@ -422,6 +427,30 @@ def build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts):
         fig.add_hline(y=0, line=dict(color=ZERO_LINE, width=1, dash="dash"),
                       row=current_row, col=1)
 
+        if dd_highlight:
+            for r in range(1, n_rows + 1):
+                fig.add_vrect(
+                    x0=dd_highlight["peak_ts"], x1=dd_highlight["trough_ts"],
+                    fillcolor="rgba(255,65,100,0.08)", line_width=0,
+                    row=r, col=1,
+                )
+            fig.add_trace(go.Scatter(
+                x=[dd_highlight["peak_ts"], dd_highlight["trough_ts"]],
+                y=[dd_highlight["peak_pnl"], dd_highlight["trough_pnl"]],
+                mode="markers+lines+text",
+                marker=dict(
+                    size=11, color=["#00e5a0", "#ff4d6a"], symbol="diamond",
+                    line=dict(color="#fff", width=1.5),
+                ),
+                line=dict(color="#ff4d6a", width=1.5, dash="dash"),
+                text=[f"Peak: {dd_highlight['peak_pnl']:+,.1f}",
+                      f"Trough: {dd_highlight['trough_pnl']:+,.1f}"],
+                textposition=["top center", "bottom center"],
+                textfont=dict(color="#c0ccd8", size=10, family=FONT),
+                name=f"Max DD: {dd_highlight['max_dd']:+,.1f}",
+                showlegend=True,
+            ), row=current_row, col=1)
+
     h = 300 + 220 * (n_rows - 1)
     fig.update_layout(
         height=h,
@@ -559,12 +588,28 @@ def build_portfolio_overview(prices_df, selected_products, sharpe_window):
 def render_metrics(prices_df, trades_df, product):
     pdf = prices_df[prices_df["product"] == product]
     if pdf.empty:
-        return
+        return None
 
+    pdf = pdf.sort_values("timestamp")
     final_pnl = pdf["profit_and_loss"].iloc[-1] if "profit_and_loss" in pdf.columns else 0
     pnl_vals = pdf["profit_and_loss"].fillna(0).values
     hwm = np.maximum.accumulate(pnl_vals)
-    max_dd = float(np.min(pnl_vals - hwm))
+    drawdown = pnl_vals - hwm
+    max_dd = float(np.min(drawdown))
+
+    dd_info = None
+    if max_dd < 0:
+        ts_vals = pdf["timestamp"].values
+        trough_idx = int(np.argmin(drawdown))
+        peak_idx = int(np.argmax(pnl_vals[:trough_idx + 1]))
+        dd_info = {
+            "peak_ts": float(ts_vals[peak_idx]),
+            "peak_pnl": float(pnl_vals[peak_idx]),
+            "trough_ts": float(ts_vals[trough_idx]),
+            "trough_pnl": float(pnl_vals[trough_idx]),
+            "max_dd": max_dd,
+        }
+
     mid_prices = pdf["mid_price"].dropna()
     price_range = f"{mid_prices.min():.0f} – {mid_prices.max():.0f}" if len(mid_prices) > 0 else "—"
     n_timestamps = pdf["timestamp"].nunique()
@@ -593,15 +638,21 @@ def render_metrics(prices_df, trades_df, product):
         ("SELLS", str(n_sells), "red",
          "Number of trades where your algorithm was the seller (SUBMISSION appears as seller)."),
     ]
-    for col, (label, value, cls, tip) in zip(cols, cards):
+    show_dd = False
+    for i, (col, (label, value, cls, tip)) in enumerate(zip(cols, cards)):
         cls_str = f" {cls}" if cls else ""
+        card_cls = " dd-clickable" if i == 1 and dd_info else ""
         col.markdown(f"""
-        <div class="metric-card">
+        <div class="metric-card{card_cls}">
             <span class="tooltip-text">{tip}</span>
             <div class="label">{label}</div>
             <div class="value{cls_str}">{value}</div>
         </div>
         """, unsafe_allow_html=True)
+        if i == 1 and dd_info:
+            show_dd = col.checkbox("Show on chart", key=f"show_dd_{product}")
+
+    return dd_info if show_dd else None
 
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
@@ -695,8 +746,8 @@ if prices_df is not None and not prices_df.empty:
 
         for product in selected_products:
             st.markdown(f"---")
-            render_metrics(prices_df, trades_df, product)
-            build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts)
+            dd_highlight = render_metrics(prices_df, trades_df, product)
+            build_charts(prices_df, trades_df, product, orders_by_ts, positions_by_ts, dd_highlight=dd_highlight)
 
 else:
     st.markdown("""
